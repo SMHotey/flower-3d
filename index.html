@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d0a">
+<title>Цветок — 3D</title>
+<meta name="description" content="Комнатное растение в керамическом горшке: рендер в Blender + интерактивная 3D-модель в браузере.">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(70% 55% at 50% 12%, #1b211a 0%, #101410 45%, #0a0c09 100%);
+    color: #e8ecdf;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #scene {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block; touch-action: none;
+  }
+
+  .glow {
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(45% 35% at 50% 30%, rgba(255, 238, 205, .10), transparent 70%),
+      radial-gradient(80% 70% at 50% 115%, rgba(0, 0, 0, .72), transparent 60%);
+  }
+
+  .topbar {
+    position: fixed; top: max(14px, env(safe-area-inset-top)); left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; pointer-events: none;
+  }
+  .brand { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: #93a184; }
+  .brand b { color: #cfe3b0; font-weight: 600; }
+
+  .bottom {
+    position: fixed; left: 0; right: 0; bottom: max(16px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    padding: 0 16px; pointer-events: none;
+  }
+  .title { margin: 0; font-size: clamp(15px, 2.2vw, 19px); font-weight: 600; letter-spacing: .1em;
+           text-transform: uppercase; text-shadow: 0 2px 18px rgba(0,0,0,.7); }
+  .hint { margin: 0; font-size: 12px; color: #8b9a7d; letter-spacing: .03em; text-align: center; }
+  .hint kbd { font: inherit; padding: 1px 6px; border-radius: 5px;
+              border: 1px solid rgba(139,154,125,.35); color: #b9c8ab; }
+
+  .controls { display: flex; gap: 8px; pointer-events: auto; flex-wrap: wrap; justify-content: center; }
+  button {
+    -webkit-appearance: none; appearance: none; cursor: pointer;
+    font: inherit; font-size: 12.5px; letter-spacing: .03em;
+    color: #dfe8d4; background: rgba(24, 30, 22, .72);
+    border: 1px solid rgba(150, 170, 130, .28);
+    border-radius: 999px; padding: 9px 15px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: background .18s ease, border-color .18s ease, transform .12s ease;
+  }
+  button:active { transform: scale(.97); }
+  button[aria-pressed="true"] { background: rgba(120, 160, 80, .28); border-color: rgba(180, 210, 140, .55); color: #f2f7e8; }
+
+  /* загрузка */
+  .loader {
+    position: fixed; inset: 0; display: grid; place-items: center; gap: 14px;
+    background: #0a0c09; transition: opacity .5s ease; z-index: 10;
+  }
+  .loader.done { opacity: 0; pointer-events: none; }
+  .loader .ring {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 2px solid rgba(150,170,130,.2); border-top-color: #a8c078;
+    animation: spin 1s linear infinite;
+  }
+  .loader p { margin: 0; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #8b9a7d; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* фото-режим */
+  .photo {
+    position: fixed; inset: 0; display: none; z-index: 8;
+    background: #070806; overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .photo.on { display: block; }
+  .photo img { display: block; width: 100%; height: auto; }
+  .photo .close {
+    position: fixed; top: max(14px, env(safe-area-inset-top)); right: 16px;
+    z-index: 9; pointer-events: auto;
+  }
+  .noscript, .nowebgl {
+    position: fixed; inset: 0; display: none; place-items: center; text-align: center;
+    padding: 24px; font-size: 14px; color: #b9c8ab; background: #0a0c09;
+  }
+  .nowebgl.on { display: grid; }
+  .nowebgl b { color: #dfe8d4; }
+</style>
+</head>
+<body>
+
+<script>
+  /* сбор ошибок для диагностики (крошечный, без зависимостей) */
+  window.__errs = [];
+  addEventListener('error', (e) => window.__errs.push(String(e.message || e.error)));
+  addEventListener('unhandledrejection', (e) => window.__errs.push('rejection: ' + String(e.reason)));
+</script>
+
+<canvas id="scene"></canvas>
+<div class="glow"></div>
+
+<div class="topbar">
+  <div class="brand">Blender → <b>WebGL</b></div>
+</div>
+
+<div class="bottom">
+  <h1 class="title">Цветок</h1>
+  <p class="hint"><kbd>перетащи</kbd> — повернуть · <kbd>щипок</kbd> — масштаб</p>
+  <div class="controls">
+    <button id="btn-spin" aria-pressed="true">Вращение</button>
+    <button id="btn-reset">Сброс</button>
+    <button id="btn-photo">Рендер</button>
+  </div>
+</div>
+
+<div class="photo" id="photo">
+  <button class="close" id="btn-close">Закрыть</button>
+  <img src="flower.jpg" alt="Рендер цветка в Blender, 1200×1500" loading="lazy">
+</div>
+
+<div class="loader" id="loader">
+  <div class="ring"></div>
+  <p id="loader-text">Загрузка модели</p>
+</div>
+
+<div class="nowebgl" id="nowebgl">
+  <p><b>WebGL недоступен</b><br>Открой вкладку «Рендер» — там статичная картинка.</p>
+</div>
+<noscript><div class="noscript" style="display:grid">Нужен JavaScript.</div></noscript>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+const loaderEl = document.getElementById('loader');
+const loaderText = document.getElementById('loader-text');
+const nowebgl = document.getElementById('nowebgl');
+
+function fail(reason) {
+  console.warn(reason);
+  loaderEl.classList.add('done');
+  nowebgl.classList.add('on');
+  document.getElementById('photo').classList.add('on');
+}
+
+let THREE, GLTFLoader, OrbitControls, DRACOLoader;
+try {
+  THREE = await import('three');
+  ({ GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'));
+  ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+  ({ DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js'));
+} catch (err) {
+  fail('Не загрузились модули three: ' + err);
+  throw err;
+}
+
+const canvas = document.getElementById('scene');
+
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+} catch (err) {
+  fail('Нет WebGL: ' + err);
+  throw err;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.01, 40);
+
+// --- свет: тёплый ключевой + холодный заполняющий, как в рендере ---
+scene.add(new THREE.HemisphereLight(0xdfe8cf, 0x1a1f16, 0.85));
+const key = new THREE.DirectionalLight(0xffe0b8, 2.4);
+key.position.set(-1.4, 2.2, 1.8);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xbcd4ff, 0.8);
+fill.position.set(1.8, 1.0, -1.2);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xfff2d0, 1.1);
+rim.position.set(0.4, 1.4, -2.2);
+scene.add(rim);
+// мягкий фронтальный — чтобы тёмные листья не сливались с фоном
+const front = new THREE.DirectionalLight(0xf4f7ea, 0.55);
+front.position.set(0.7, 0.9, 2.3);
+scene.add(front);
+
+// --- контактная тень-«пятно» под горшком (без карт теней — дешево для телефона) ---
+function shadowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(128, 128, 4, 128, 128, 124);
+  grd.addColorStop(0, 'rgba(0,0,0,0.55)');
+  grd.addColorStop(0.55, 'rgba(0,0,0,0.22)');
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 256, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const shadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.62, 0.62),
+  new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
+);
+shadow.rotation.x = -Math.PI / 2;
+shadow.position.y = 0.001;
+scene.add(shadow);
+
+// --- управление ---
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.9;
+controls.zoomSpeed = 0.8;
+controls.enablePan = false;
+controls.minDistance = 0.35;
+controls.maxDistance = 2.2;
+
+const HOME = { theta: 0.35, phi: 1.28, dist: 1.02, target: 0.24, fitted: false };
+
+// Вписываем модель по фактическим габаритам, а не по описанной сфере: растение широкое,
+// и на портретном экране ограничителем становится ширина кадра.
+function fitTo(object) {
+  const box = new THREE.Box3().setFromObject(object);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const vFov = THREE.MathUtils.degToRad(camera.fov);
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+  const fillW = 0.98, fillH = 0.60;          // доля кадра под габарит модели
+  // при вращении габарит по X «гуляет»: считаем радиус описанного цилиндра
+  const radiusXZ = 0.5 * Math.hypot(size.x, size.z);
+  const dV = (size.y / fillH) / (2 * Math.tan(vFov / 2));
+  const dH = ((2 * radiusXZ) / fillW) / (2 * Math.tan(hFov / 2));
+  const dist = Math.max(dV, dH);
+  HOME.target = center.y;
+  HOME.dist = dist;
+  HOME.fitted = true;
+  controls.minDistance = dist * 0.35;
+  controls.maxDistance = dist * 2.2;
+}
+
+function applyHome() {
+  controls.target.set(0, HOME.target, 0);
+  camera.position.set(
+    Math.sin(HOME.theta) * Math.sin(HOME.phi) * HOME.dist,
+    Math.cos(HOME.phi) * HOME.dist + HOME.target,
+    Math.cos(HOME.theta) * Math.sin(HOME.phi) * HOME.dist
+  );
+  controls.update();
+}
+applyHome();
+
+let spin = true;
+let resumeTimer = null;
+const btnSpin = document.getElementById('btn-spin');
+btnSpin.addEventListener('click', () => {
+  spin = !spin;
+  btnSpin.setAttribute('aria-pressed', String(spin));
+});
+function pauseSpin() {
+  if (!spin) return;
+  controls.autoRotate = false;
+  clearTimeout(resumeTimer);
+  resumeTimer = setTimeout(() => { if (spin) controls.autoRotate = true; }, 3500);
+}
+controls.addEventListener('start', pauseSpin);
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.9;
+
+document.getElementById('btn-reset').addEventListener('click', applyHome);
+
+const photo = document.getElementById('photo');
+document.getElementById('btn-photo').addEventListener('click', () => photo.classList.add('on'));
+document.getElementById('btn-close').addEventListener('click', () => photo.classList.remove('on'));
+
+// --- загрузка модели ---
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+
+const gltfLoader = new GLTFLoader().setDRACOLoader(draco);
+let model = null;
+
+gltfLoader.load(
+  'plant.glb',
+  (gltf) => {
+    model = gltf.scene;
+    // модель в метрах, стоит на нуле — только мягко масштабируем под кадр
+    model.traverse((o) => {
+      if (o.isMesh) {
+        o.material.envMapIntensity = 0.6;
+        if (o.material.map) o.material.map.colorSpace = THREE.SRGBColorSpace;
+      }
+    });
+    scene.add(model);
+
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    fitTo(model);            // вписываем по фактическим габаритам
+    applyHome();
+    window.__flower = {
+      loaded: true,
+      height: +size.y.toFixed(3),
+      meshes: (() => { let n = 0; model.traverse(o => { if (o.isMesh) n++; }); return n; })(),
+      tris: renderer.info.render.triangles
+    };
+    loaderEl.classList.add('done');
+  },
+  (e) => {
+    if (e.total) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      loaderText.textContent = 'Загрузка модели · ' + pct + '%';
+    }
+  },
+  (err) => fail('Модель не загрузилась: ' + err)
+);
+
+// --- цикл ---
+function resize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  if (model && HOME.fitted) { fitTo(model); applyHome(); }   // пересобираем кадр под новый аспект
+}
+window.addEventListener('resize', resize);
+resize();
+
+let visible = true;
+document.addEventListener('visibilitychange', () => { visible = !document.hidden; });
+
+const clock = new THREE.Clock();
+function tick() {
+  requestAnimationFrame(tick);
+  if (!visible) return;
+  controls.autoRotate = spin;
+  controls.update();
+  renderer.render(scene, camera);
+  window.__frames = (window.__frames || 0) + 1;
+}
+tick();
+
+// отладочный доступ для автотестов
+window.__viewer = () => ({
+  camDist: +camera.position.distanceTo(controls.target).toFixed(3),
+  autoRotate: controls.autoRotate,
+  meshes: window.__flower ? window.__flower.meshes : 0,
+  frames: window.__frames || 0
+});
+</script>
+</body>
+</html>
